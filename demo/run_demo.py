@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mizan import MizanPipeline, TfidfRetriever
 
@@ -44,6 +45,11 @@ def main() -> int:
     print(f"suppressed before display: {len(report.suppressed)} claim(s)")
     for claim in report.suppressed:
         print(f"  - {claim}")
+
+    from report_to_html import write_report
+
+    out = write_report(report.to_dict(), Path(__file__).parent / "report.html")
+    print(f"html report: {out}")
     return 0
 
 
