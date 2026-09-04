@@ -1,9 +1,13 @@
-"""Render a Mizan PipelineReport as a self-contained RTL HTML report.
+"""Render a Mizan PipelineReport as a self-contained, premium RTL HTML report.
 
-This produces the same visual language as the product demo: the answer with
-each claim colored by its entailment score, per-claim verification bars, the
-groundedness ring, and the suppressed-claims block. The HTML is standalone
-(inline CSS, no external assets) so it can be attached or opened anywhere.
+Design DNA mirrors the Radix mostaql_case gold standard (MediChat AI Triage):
+IBM Plex Sans Arabic + IBM Plex Mono, a clinical light canvas, semantic status
+rings (good / warn / urgent with soft fill and inset ring), confidence meters,
+layered slate shadows, and clean radii. It is the same visual language Mohamed
+ships to Mostaql clients, applied to claim-level verification.
+
+The report is standalone (fonts loaded from Google Fonts with a system
+fallback stack, everything else inline) so it renders on its own anywhere.
 """
 
 from __future__ import annotations
@@ -11,93 +15,228 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
-_GREEN = "#2e9e6b"
-_GOLD = "#c9a24b"
-_RED = "#c0504d"
+# Semantic entailment bands, mirrored from the mostaql_case status system.
+_GOOD = "good"      # supported
+_WARN = "warn"      # weak / partial
+_URGENT = "urgent"  # unsupported / suppressed
 
 
-def _color(score: float) -> str:
+def _band(score: float) -> str:
     if score >= 0.75:
-        return _GREEN
+        return _GOOD
     if score >= 0.45:
-        return _GOLD
-    return _RED
+        return _WARN
+    return _URGENT
 
 
-def render_report(report: dict, title: str = "Mizan تقرير التحقق") -> str:
+def _band_ar(band: str) -> str:
+    return {"good": "مسنَد", "warn": "جزئي", "urgent": "غير مسنَد"}[band]
+
+
+_STYLE = """
+:root{
+  --teal:#0EA5A4; --teal-600:#0D9488; --navy:#1E3A8A;
+  --ink:#0F172A; --ink-2:#1E293B; --slate:#475569; --slate-2:#64748B; --slate-3:#94A3B8;
+  --line:#E2E8F0; --line-2:#EEF2F7; --bg:#F6F8FB; --bg-2:#F1F5F9; --white:#FFFFFF;
+  --good:#059669; --good-bg:#ECFDF5; --good-ring:#A7F3D0;
+  --warn:#D97706; --warn-bg:#FFFBEB; --warn-ring:#FDE68A;
+  --urgent:#DC2626; --urgent-bg:#FEF2F2; --urgent-ring:#FECACA;
+  --shadow-sm:0 1px 2px rgba(15,23,42,.04),0 1px 1px rgba(15,23,42,.03);
+  --shadow-md:0 4px 12px rgba(15,23,42,.06),0 1px 3px rgba(15,23,42,.04);
+  --shadow-lg:0 12px 40px -8px rgba(15,23,42,.16);
+  --r-sm:8px; --r-md:12px; --r-lg:16px; --r-xl:22px; --r-pill:999px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);
+  font-family:"IBM Plex Sans Arabic","IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  line-height:1.85;padding:34px 22px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1060px;margin:0 auto}
+.mono,.latin{font-family:"IBM Plex Mono",ui-monospace,monospace;font-feature-settings:"tnum"}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--slate-2)}
+
+.top{display:flex;align-items:center;gap:14px;margin-bottom:26px}
+.mark{width:44px;height:44px;border-radius:13px;flex:none;display:grid;place-items:center;
+  background:linear-gradient(135deg,var(--teal) 0%,var(--teal-600) 55%,var(--navy) 135%);
+  box-shadow:0 6px 18px -6px rgba(13,148,136,.6)}
+.mark svg{width:24px;height:24px}
+.top h1{font-size:21px;font-weight:600;letter-spacing:-.01em}
+.top .en{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--slate-2)}
+.top .status{margin-inline-start:auto;display:flex;align-items:center;gap:8px;
+  font-size:12px;color:var(--slate);background:var(--white);border:1px solid var(--line);
+  padding:7px 13px;border-radius:var(--r-pill);box-shadow:var(--shadow-sm)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--good);
+  box-shadow:0 0 0 3px var(--good-bg)}
+
+.grid{display:grid;grid-template-columns:1.7fr 1fr;gap:16px;align-items:start}
+@media(max-width:820px){.grid{grid-template-columns:1fr}}
+.panel{background:var(--white);border:1px solid var(--line);border-radius:var(--r-lg);
+  padding:20px 22px;box-shadow:var(--shadow-md);margin-bottom:16px}
+.phead{display:flex;align-items:baseline;gap:9px;margin-bottom:16px}
+.phead h2{font-size:14px;font-weight:600}
+.phead .n{margin-inline-start:auto;font-family:"IBM Plex Mono",monospace;
+  font-size:10px;color:var(--slate-3)}
+
+.answer{font-size:15.5px;line-height:2.15;color:var(--ink-2)}
+.cl{border-bottom:2.5px solid transparent;padding-bottom:1px}
+.cl.good{border-color:var(--good)}
+.cl.warn{border-color:var(--warn)}
+.cl.urgent{border-color:var(--urgent)}
+.cl.sup{opacity:.5;text-decoration:line-through;text-decoration-color:var(--urgent)}
+.cl sup{font-family:"IBM Plex Mono",monospace;font-size:9.5px;font-weight:500;
+  margin-inline-start:3px;color:var(--slate-2)}
+
+.row{padding:13px 0;border-bottom:1px solid var(--line-2)}
+.row:last-child{border-bottom:none}
+.row .claim{font-size:13.5px;color:var(--ink-2);margin-bottom:7px}
+.row .sub{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.badge{display:inline-flex;align-items:center;font-family:"IBM Plex Mono",monospace;
+  font-size:10.5px;font-weight:500;padding:3px 9px;border-radius:var(--r-pill)}
+.badge .pip{width:5px;height:5px;border-radius:50%;background:currentColor;margin-inline-end:6px}
+.badge.good{background:var(--good-bg);color:var(--good);box-shadow:inset 0 0 0 1px var(--good-ring)}
+.badge.warn{background:var(--warn-bg);color:var(--warn);box-shadow:inset 0 0 0 1px var(--warn-ring)}
+.badge.urgent{background:var(--urgent-bg);color:var(--urgent);box-shadow:inset 0 0 0 1px var(--urgent-ring)}
+.meter{flex:1;min-width:120px;height:7px;background:var(--bg-2);border-radius:var(--r-pill);overflow:hidden}
+.meter>i{display:block;height:100%;border-radius:var(--r-pill)}
+.meter>i.good{background:var(--good)} .meter>i.warn{background:var(--warn)} .meter>i.urgent{background:var(--urgent)}
+.score{font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:500;color:var(--ink-2);min-width:36px}
+.ev{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--slate-3)}
+
+.ring-wrap{text-align:center}
+.ring{width:132px;height:132px;border-radius:50%;margin:8px auto 14px;display:grid;place-items:center;position:relative;
+  background:conic-gradient(var(--teal) calc(var(--v)*1%),var(--line) 0)}
+.ring::after{content:"";position:absolute;inset:11px;border-radius:50%;background:var(--white);
+  box-shadow:var(--shadow-sm)}
+.ring b{position:relative;z-index:1;font-family:"IBM Plex Mono",monospace;font-size:30px;font-weight:600;color:var(--ink)}
+.ring b span{font-size:15px;color:var(--slate-2)}
+.ring-label{font-size:12.5px;color:var(--slate);margin-bottom:16px}
+.legend{display:flex;flex-direction:column;gap:9px;text-align:start}
+.legend .li{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--slate)}
+.legend .sw{width:10px;height:10px;border-radius:3px;flex:none}
+.legend .n{margin-inline-start:auto;font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-2)}
+
+.sup-panel{border-color:var(--urgent-ring);background:linear-gradient(180deg,var(--urgent-bg),var(--white) 60%)}
+.sup-panel h2{color:var(--urgent)}
+.sup-list{list-style:none;display:flex;flex-direction:column;gap:8px}
+.sup-list li{font-size:13px;color:var(--ink-2);padding-inline-start:16px;position:relative}
+.sup-list li::before{content:"";position:absolute;inset-inline-start:0;top:9px;width:6px;height:6px;
+  border-radius:50%;background:var(--urgent)}
+.foot{margin-top:20px;text-align:center;font-family:"IBM Plex Mono",monospace;
+  font-size:10.5px;color:var(--slate-3);letter-spacing:.04em}
+"""
+
+_MARK_SVG = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M12 3v18"/><path d="M5 7l-2.5 6a4.2 4.2 0 0 0 8 0L8 7"/>'
+    '<path d="M19 7l-2.5 6a4.2 4.2 0 0 0 8 0L22 7"/><path d="M4 6.5 20 4"/></svg>'
+)
+
+
+def render_report(report: dict, title: str = "ميزان · تقرير التحقق") -> str:
     """Return standalone HTML for a ``PipelineReport.to_dict()`` payload."""
     ground_pct = round(report.get("groundedness", 0.0) * 100)
     claims = report.get("claims", [])
     suppressed = set(report.get("suppressed", []))
 
+    counts = {"good": 0, "warn": 0, "urgent": 0}
     spans = []
     for c in claims:
-        color = _color(c["entail"])
-        deco = "opacity:.45;text-decoration:line-through;" if c["claim"] in suppressed else ""
+        band = _band(c["entail"])
+        counts[band] += 1
+        cls = f"cl {band}" + (" sup" if c["claim"] in suppressed else "")
         spans.append(
-            f'<span style="border-bottom:2px solid {color};{deco}" '
-            f'title="entailment {c["entail"]:.2f}">{html.escape(c["claim"])}</span>'
+            f'<span class="{cls}">{html.escape(c["claim"])}'
+            f'<sup>{c["entail"]:.2f}</sup></span>'
         )
     answer_html = " ".join(spans)
 
     rows = []
     for c in claims:
-        color = _color(c["entail"])
+        band = _band(c["entail"])
         width = round(c["entail"] * 100)
-        evidence = " ".join(html.escape(e) for e in c.get("evidence_ids", []))
+        ev = " ".join(html.escape(e) for e in c.get("evidence_ids", [])) or "لا مصدر"
         rows.append(
             '<div class="row">'
             f'<div class="claim">{html.escape(c["claim"])}</div>'
-            f'<div class="meta">entailment {c["entail"]:.2f} · {html.escape(c["verdict"])} · {html.escape(c["triage"])} · {evidence}</div>'
-            f'<div class="track"><i style="width:{width}%;background:{color}"></i></div>'
-            "</div>"
+            '<div class="sub">'
+            f'<span class="badge {band}"><span class="pip"></span>{_band_ar(band)}</span>'
+            f'<span class="meter"><i class="{band}" style="width:{width}%"></i></span>'
+            f'<span class="score">{c["entail"]:.2f}</span>'
+            f'<span class="ev">{ev}</span>'
+            "</div></div>"
         )
     rows_html = "\n".join(rows)
 
     suppressed_html = ""
     if suppressed:
         items = "".join(f"<li>{html.escape(s)}</li>" for s in sorted(suppressed))
-        suppressed_html = f'<div class="panel"><h2>ادعاءات محجوبة قبل العرض</h2><ul>{items}</ul></div>'
+        suppressed_html = (
+            '<div class="panel sup-panel"><div class="phead">'
+            '<span class="eyebrow">Suppressed</span>'
+            '<h2>ادعاءات محجوبة قبل العرض</h2></div>'
+            f'<ul class="sup-list">{items}</ul></div>'
+        )
+
+    legend = (
+        '<div class="legend">'
+        f'<div class="li"><span class="sw" style="background:var(--good)"></span>مسنَد<span class="n">{counts["good"]}</span></div>'
+        f'<div class="li"><span class="sw" style="background:var(--warn)"></span>جزئي<span class="n">{counts["warn"]}</span></div>'
+        f'<div class="li"><span class="sw" style="background:var(--urgent)"></span>غير مسنَد<span class="n">{counts["urgent"]}</span></div>'
+        "</div>"
+    )
 
     return f"""<!doctype html>
 <html dir="rtl" lang="ar">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)}</title>
-<style>
- body{{background:#101216;color:#e8e6e1;font-family:'Segoe UI',Tahoma,sans-serif;margin:0;padding:28px;line-height:1.9}}
- h1{{font-size:20px;margin:0 0 4px}} h2{{font-size:14px;color:#c9a24b;margin:0 0 10px}}
- .sub{{color:#8a8f98;font-size:12px;margin-bottom:22px}}
- .grid{{display:grid;grid-template-columns:2fr 1fr;gap:16px;align-items:start}}
- .panel{{background:#171a20;border:1px solid #262b33;border-radius:12px;padding:18px;margin-bottom:16px}}
- .row{{margin-bottom:14px}} .claim{{font-size:14px}} .meta{{color:#8a8f98;font-size:11.5px;margin:2px 0 6px}}
- .track{{height:6px;background:#262b33;border-radius:3px;overflow:hidden}} .track i{{display:block;height:100%}}
- .ring{{width:110px;height:110px;border-radius:50%;margin:6px auto 10px;display:grid;place-items:center;
-   background:conic-gradient({_GOLD} {ground_pct}%, #262b33 0);box-shadow:0 0 14px rgba(201,162,75,.3)}}
- .ring b{{background:#171a20;width:84px;height:84px;border-radius:50%;display:grid;place-items:center;font-size:24px}}
- ul{{margin:0;padding-inline-start:18px;color:#c0504d;font-size:13px}}
-</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>{_STYLE}</style>
 </head>
 <body>
-<h1>{html.escape(title)}</h1>
-<div class="sub">claim-level groundedness · mDeBERTa-v3 NLI · Mizan</div>
-<div class="grid">
- <div>
-  <div class="panel"><h2>الاجابة الملونة بدرجة الاسناد</h2><p>{answer_html}</p></div>
-  <div class="panel"><h2>تفكيك الادعاءات والتحقق</h2>{rows_html}</div>
-  {suppressed_html}
- </div>
- <div class="panel" style="text-align:center">
-  <h2>درجة الاسناد الكلية</h2>
-  <div class="ring"><b>{ground_pct}%</b></div>
-  <div class="sub">متوسط موزون لدرجات الادعاءات · الاوزان ضمن التقرير</div>
- </div>
+<div class="wrap">
+  <div class="top">
+    <div class="mark">{_MARK_SVG}</div>
+    <div>
+      <h1>ميزان <span class="en">Mizan</span></h1>
+      <div class="eyebrow">claim-level groundedness · mDeBERTa-v3 NLI</div>
+    </div>
+    <div class="status"><span class="dot"></span>نموذج التحقق نشط<span class="mono">mDeBERTa-v3-xnli</span></div>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="panel">
+        <div class="phead"><span class="eyebrow">Answer</span><h2>الإجابة الملوّنة بدرجة الإسناد</h2>
+          <span class="n">colored by entailment</span></div>
+        <div class="answer">{answer_html}</div>
+      </div>
+      <div class="panel">
+        <div class="phead"><span class="eyebrow">Verification</span><h2>تفكيك الادعاءات والتحقق</h2>
+          <span class="n">atomic claims · NLI</span></div>
+        {rows_html}
+      </div>
+      {suppressed_html}
+    </div>
+
+    <div class="panel ring-wrap">
+      <div class="phead"><span class="eyebrow">Trust</span><h2>درجة الإسناد الكلية</h2></div>
+      <div class="ring" style="--v:{ground_pct}"><b>{ground_pct}<span>%</span></b></div>
+      <div class="ring-label">متوسط موزون لدرجات الادعاءات</div>
+      {legend}
+    </div>
+  </div>
+  <div class="foot">Mizan · claim decomposition + NLI entailment + calibration + retrieval-vs-hallucination triage</div>
 </div>
 </body>
 </html>"""
 
 
-def write_report(report: dict, path: str | Path, title: str = "Mizan تقرير التحقق") -> Path:
+def write_report(report: dict, path: str | Path, title: str = "ميزان · تقرير التحقق") -> Path:
     out = Path(path)
     out.write_text(render_report(report, title), encoding="utf-8")
     return out

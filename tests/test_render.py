@@ -24,7 +24,8 @@ REPORT = {
 class TestRender(unittest.TestCase):
     def test_renders_ring_claims_and_suppression(self):
         html_out = report_to_html.render_report(REPORT)
-        self.assertIn("71%", html_out)
+        self.assertIn("--v:71", html_out)          # ring value bound to groundedness
+        self.assertIn(">71<", html_out)            # displayed percentage number
         self.assertIn("claim one", html_out)
         self.assertIn("line-through", html_out)
         self.assertIn("محجوبة", html_out)
