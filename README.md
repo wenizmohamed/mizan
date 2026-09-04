@@ -1,5 +1,10 @@
 # Mizan ميزان
 
+> **Source-available for review only.** This repository is published so its author's
+> technical work can be evaluated. It is NOT open source. All rights reserved: no
+> copying, cloning, use, or derivative work is permitted without the author's prior
+> written permission. See [LICENSE](LICENSE).
+
 **Claim-level groundedness verification for Arabic and cross-lingual RAG.**
 
 Mizan decomposes a RAG answer into atomic claims, verifies each claim against the
@@ -76,7 +81,8 @@ table are the active work items.
 
 ## License
 
-MIT
+Proprietary. All rights reserved. Source-available for review only, no license
+to copy, use, or redistribute. See [LICENSE](LICENSE).
 
 ---
 
