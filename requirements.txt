@@ -1,0 +1,6 @@
+numpy>=1.26
+
+# NLI verification (optional for the pure-logic modules and the test suite)
+transformers>=4.44
+torch>=2.3
+sentencepiece>=0.2
